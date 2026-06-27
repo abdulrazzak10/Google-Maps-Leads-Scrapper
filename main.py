@@ -108,9 +108,16 @@ def extract_place(page: Page) -> Place:
                 place.opens_at = opens_at2_raw.replace("\u202f","")
     return place
 
-def scrape_places(search_for: str, total: int) -> List[Place]:
+def scrape_places(search_for: str, total: Optional[int] = None) -> List[Place]:
+    """
+    If total is None (or 0), the scraper ignores any cap and scrolls until
+    Google Maps' results list truly ends ("You've reached the end of the list").
+    If total is set, it still stops early once that many are found.
+    """
     setup_logging()
     places: List[Place] = []
+    no_limit = not total or total <= 0
+
     with sync_playwright() as p:
         if platform.system() == "Windows":
             browser_path = r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
@@ -125,21 +132,50 @@ def scrape_places(search_for: str, total: int) -> List[Place]:
             page.keyboard.press("Enter")
             page.wait_for_selector('//a[contains(@href, "https://www.google.com/maps/place")]')
             page.hover('//a[contains(@href, "https://www.google.com/maps/place")]')
+
+            results_xpath = '//a[contains(@href, "https://www.google.com/maps/place")]'
+            # This text appears in the feed once Google Maps truly has no more results to load
+            end_of_list_xpath = '//span[contains(text(), "You\'ve reached the end of the list")]'
+
             previously_counted = 0
+            no_change_tries = 0
+            max_no_change_tries = 8  # safety net only — real stop condition is end_of_list_xpath below
+
             while True:
                 page.mouse.wheel(0, 10000)
-                page.wait_for_selector('//a[contains(@href, "https://www.google.com/maps/place")]')
-                found = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()
+                page.wait_for_timeout(2500)  # let new results actually load before counting
+
+                found = page.locator(results_xpath).count()
                 logging.info(f"Currently Found: {found}")
-                if found >= total:
+
+                # Real end-of-list signal from Google Maps itself
+                if page.locator(end_of_list_xpath).count() > 0:
+                    logging.info("Reached Google's 'end of the list' marker. Stopping scroll.")
                     break
+
+                if not no_limit and found >= total:
+                    logging.info(f"Reached requested total of {total}. Stopping scroll.")
+                    break
+
                 if found == previously_counted:
-                    logging.info("Arrived at all available")
-                    break
+                    no_change_tries += 1
+                    logging.info(f"No new results yet ({no_change_tries}/{max_no_change_tries})")
+                    if no_change_tries >= max_no_change_tries:
+                        logging.info("No new results after multiple tries. Assuming list is exhausted.")
+                        break
+                else:
+                    no_change_tries = 0  # reset, we got new results
+
                 previously_counted = found
-            listings = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').all()[:total]
+
+            if no_limit:
+                listings = page.locator(results_xpath).all()
+            else:
+                listings = page.locator(results_xpath).all()[:total]
+
             listings = [listing.locator("xpath=..") for listing in listings]
             logging.info(f"Total Found: {len(listings)}")
+
             for idx, listing in enumerate(listings):
                 try:
                     listing.click()
@@ -148,6 +184,7 @@ def scrape_places(search_for: str, total: int) -> List[Place]:
                     place = extract_place(page)
                     if place.name:
                         places.append(place)
+                        logging.info(f"[{idx+1}/{len(listings)}] Scraped: {place.name}")
                     else:
                         logging.warning(f"No name found for listing {idx+1}, skipping.")
                 except Exception as e:
@@ -173,12 +210,15 @@ def save_places_to_csv(places: List[Place], output_path: str = "result.csv", app
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--search", type=str, help="Search query for Google Maps")
-    parser.add_argument("-t", "--total", type=int, help="Total number of results to scrape")
+    parser.add_argument(
+        "-t", "--total", type=int, default=0,
+        help="Max number of results to scrape. Leave unset or 0 to scrape ALL results until the list truly ends."
+    )
     parser.add_argument("-o", "--output", type=str, default="result.csv", help="Output CSV file path")
     parser.add_argument("--append", action="store_true", help="Append results to the output file instead of overwriting")
     args = parser.parse_args()
     search_for = args.search or "turkish stores in toronto Canada"
-    total = args.total or 1
+    total = args.total  # 0 means "no limit, scrape till the end"
     output_path = args.output
     append = args.append
     places = scrape_places(search_for, total)
