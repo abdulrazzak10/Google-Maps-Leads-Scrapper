@@ -99,4 +99,4 @@ python main.py -s 'HVAC contractor $city' -o '$file'
     Write-Host ""
 }
 
-Write-Host "ALL BATCHES COMPLETE. Check your folder for all leads_*.csv files."
+Write-Host "ALL BATCHES COMPLETE. Check your folder for all leads_*.csv files."# updated

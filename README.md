@@ -77,4 +77,4 @@ Outputs a combined master CSV with a `has_website` column flagging leads with no
 - This is for lead generation / business research purposes. Respect target sites' terms of service and applicable data/privacy laws when using scraped contact information.
 
 ## License
-MIT
+MIT<!-- updated -->

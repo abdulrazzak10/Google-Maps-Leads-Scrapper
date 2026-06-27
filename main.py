@@ -225,4 +225,4 @@ def main():
     save_places_to_csv(places, output_path, append=append)
 
 if __name__ == "__main__":
-    main()
+    main()# updated
